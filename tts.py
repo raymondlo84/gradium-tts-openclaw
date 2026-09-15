@@ -1,95 +1,120 @@
 #!/usr/bin/env python3
-"""Gradium TTS - Convert text to speech and play audio or save to WAV."""
+"""Gradium TTS app — convert text to speech and play it."""
 
-import argparse
 import os
 import sys
-from pathlib import Path
+import asyncio
+import argparse
 
-import numpy as np
-import sounddevice as sd
-import soundfile as sf
-from dotenv import load_dotenv
+# Add venv site-packages so gradium/soundfile can be found
+venv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "venv")
+if os.path.exists(venv_path):
+    sys.path.insert(0, os.path.join(venv_path, "lib", "python3.12", "site-packages"))
+
+# Load env file if present
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(env_path):
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                os.environ.setdefault(key.strip(), value.strip())
+
+if not os.environ.get("GRADIUM_API_KEY"):
+    print("Error: set GRADIUM_API_KEY environment variable", file=sys.stderr)
+    sys.exit(1)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Gradium TTS - Text to Speech")
-    parser.add_argument("text", nargs="?", default=None, help="Text to convert to speech")
-    parser.add_argument(
-        "-o", "--output", type=str, default=None, help="Save to WAV file (also plays)"
-    )
-    parser.add_argument("-v", "--voice", type=str, default=None, help="Voice ID")
-    parser.add_argument(
-        "-r", "--rate", type=int, default=48000, help="Playback sample rate (default: 48000)"
-    )
+try:
+    import soundfile as sf
+    import numpy as np
+    HAS_SOUNDFILE = True
+except ImportError:
+    HAS_SOUNDFILE = False
+
+
+async def main():
+    import sounddevice as sd
+    import gradium
+
+    parser = argparse.ArgumentParser(description="Gradium TTS")
+    parser.add_argument("text", help="Text to speak")
+    parser.add_argument("-o", "--output", "-f", help="Save to WAV file")
+    parser.add_argument("-v", "--voice", default="YTpq7expH9539ERJ", help="Voice ID (default: flagship voice)")
+    parser.add_argument("-r", "--rate", type=int, default=48000, help="Playback sample rate")
+    parser.add_argument("-d", "--device", type=int, default=None, help="Audio device index (default: system default)")
+    parser.add_argument("--list-devices", action="store_true", help="List all audio devices and exit")
     args = parser.parse_args()
 
-    # Load environment variables from .env file
-    env_path = Path(__file__).parent / ".env"
-    load_dotenv(env_path)
+    # List devices if requested
+    if args.list_devices:
+        print("=== Audio Devices ===", file=sys.stderr)
+        for i in range(sd.query_devices().__len__()):
+            try:
+                d = sd.query_devices(i)
+                name = d["name"]
+                inp = d.get("max_input_channels", 0)
+                outp = d.get("max_output_channels", 0)
+                rate = d.get("default_samplerate", "?")
+                print(f"  [{i}] {name} (in:{inp} out:{outp} {rate}Hz)", file=sys.stderr)
+            except Exception:
+                pass
+        return
 
-    api_key = os.environ.get("GRADIUM_API_KEY")
-    if not api_key:
-        print("Error: GRADIUM_API_KEY not set. Create a .env file with your API key.", file=sys.stderr)
-        sys.exit(1)
+    print(f'TTS: "{args.text[:60]}..."', file=sys.stderr)
+    print("Generating speech...", file=sys.stderr)
 
-    if not args.text:
-        parser.print_help()
-        print("\nError: Please provide text to convert.", file=sys.stderr)
-        sys.exit(1)
+    client = gradium.client.GradiumClient()
+    result = await client.tts(
+        setup={"voice_id": args.voice, "output_format": "wav"},
+        text=args.text,
+    )
 
-    # Import gradium after validation
-    try:
-        import gradium
-    except ImportError:
-        print(
-            "Error: 'gradium' package not installed. Install with: "
-            "pip install gradium soundfile sounddevice numpy",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    raw = result.raw_data
 
-    print(f"Generating speech: {args.text[:60]}{'...' if len(args.text) > 60 else ''}")
+    if args.output:
+        with open(args.output, "wb") as f:
+            f.write(raw)
+        print(f"Saved to {args.output}", file=sys.stderr)
 
-    # Call Gradium TTS API
-    client = gradium.Gradium(api_key=api_key)
-
-    try:
-        response = client.tts(
-            text=args.text,
-            voice_id=args.voice,  # type: ignore
-            sample_rate=args.rate,
-        )
-
-        # response should contain audio data - adapt based on actual gradium API
-        # This is a placeholder for the actual gradium SDK response handling
-        audio_data = response.audio if hasattr(response, "audio") else response
-        sample_rate = response.sample_rate if hasattr(response, "sample_rate") else args.rate
-
-        if isinstance(audio_data, np.ndarray):
-            audio_array = audio_data
-        elif isinstance(audio_data, (list, bytes)):
-            audio_array = np.array(audio_data, dtype=np.float32)
-        else:
-            print(f"Unexpected audio data type: {type(audio_data)}", file=sys.stderr)
-            sys.exit(1)
-
-        # Play audio
-        print("Playing audio...")
-        sd.play(audio_array, samplerate=sample_rate)
-        sd.wait()
-
-        # Save to file if requested
-        if args.output:
-            sf.write(args.output, audio_array, sample_rate)
-            print(f"Audio saved to: {args.output}")
-
-        print("Done!")
-
-    except Exception as e:
-        print(f"Error during TTS generation: {e}", file=sys.stderr)
-        sys.exit(1)
+    # Try to play
+    if HAS_SOUNDFILE:
+        try:
+            # Check if PipeWire is available and use it as default backend
+            # This properly exposes USB devices like Zone Vibe 130
+            use_pipewire = False
+            try:
+                import subprocess
+                result = subprocess.run(['pactl', 'info'], capture_output=True, text=True, timeout=5)
+                if 'PipeWire' in result.stdout or 'pipewire' in result.stdout:
+                    use_pipewire = True
+            except Exception:
+                pass
+            
+            # Override device if specified
+            if args.device is not None:
+                sd.default.device = (args.device, args.device)
+                dev_name = f"device {args.device}"
+            elif use_pipewire:
+                # Use pipewire as default backend for proper device detection
+                sd.default.device = ('pipewire', 'pipewire')
+                dev_name = "PipeWire (pipewire)"
+            else:
+                dev_idx = sd.default.device[0] if isinstance(sd.default.device, (list, tuple)) else sd.default.device
+                try:
+                    dev_name = sd.query_devices(dev_idx)["name"]
+                except Exception:
+                    dev_name = f"device index {dev_idx}"
+            
+            arr = np.frombuffer(raw, dtype=np.int16)
+            print(f"Playing through: {dev_name}", file=sys.stderr)
+            sd.play(arr, samplerate=args.rate)
+            sd.wait()
+            print("Done.", file=sys.stderr)
+        except Exception as e:
+            print(f"Could not play audio: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
