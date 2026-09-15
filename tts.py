@@ -1,76 +1,95 @@
 #!/usr/bin/env python3
-"""Gradium TTS app — convert text to speech and play it."""
+"""Gradium TTS - Convert text to speech and play audio or save to WAV."""
 
+import argparse
 import os
 import sys
-import asyncio
-import argparse
+from pathlib import Path
 
-# Add venv site-packages so gradium/soundfile can be found
-venv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "venv")
-if os.path.exists(venv_path):
-    sys.path.insert(0, os.path.join(venv_path, "lib", "python3.12", "site-packages"))
-
-# Load env file if present
-env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-if os.path.exists(env_path):
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, _, value = line.partition("=")
-                os.environ.setdefault(key.strip(), value.strip())
-
-if not os.environ.get("GRADIUM_API_KEY"):
-    print("Error: set GRADIUM_API_KEY environment variable", file=sys.stderr)
-    sys.exit(1)
+import numpy as np
+import sounddevice as sd
+import soundfile as sf
+from dotenv import load_dotenv
 
 
-try:
-    import soundfile as sf
-    import numpy as np
-    HAS_SOUNDFILE = True
-except ImportError:
-    HAS_SOUNDFILE = False
-
-
-async def main():
-    import gradium
-
-    parser = argparse.ArgumentParser(description="Gradium TTS")
-    parser.add_argument("text", help="Text to speak")
-    parser.add_argument("-o", "--output", "-f", help="Save to WAV file")
-    parser.add_argument("-v", "--voice", default="YTpq7expH9539ERJ", help="Voice ID (default: flagship voice)")
-    parser.add_argument("-r", "--rate", type=int, default=48000, help="Playback sample rate")
+def main():
+    parser = argparse.ArgumentParser(description="Gradium TTS - Text to Speech")
+    parser.add_argument("text", nargs="?", default=None, help="Text to convert to speech")
+    parser.add_argument(
+        "-o", "--output", type=str, default=None, help="Save to WAV file (also plays)"
+    )
+    parser.add_argument("-v", "--voice", type=str, default=None, help="Voice ID")
+    parser.add_argument(
+        "-r", "--rate", type=int, default=48000, help="Playback sample rate (default: 48000)"
+    )
     args = parser.parse_args()
 
-    print(f'TTS: "{args.text[:60]}..."', file=sys.stderr)
-    print("Generating speech...", file=sys.stderr)
+    # Load environment variables from .env file
+    env_path = Path(__file__).parent / ".env"
+    load_dotenv(env_path)
 
-    client = gradium.client.GradiumClient()
-    result = await client.tts(
-        setup={"voice_id": args.voice, "output_format": "wav"},
-        text=args.text,
-    )
+    api_key = os.environ.get("GRADIUM_API_KEY")
+    if not api_key:
+        print("Error: GRADIUM_API_KEY not set. Create a .env file with your API key.", file=sys.stderr)
+        sys.exit(1)
 
-    raw = result.raw_data
+    if not args.text:
+        parser.print_help()
+        print("\nError: Please provide text to convert.", file=sys.stderr)
+        sys.exit(1)
 
-    if args.output:
-        with open(args.output, "wb") as f:
-            f.write(raw)
-        print(f"Saved to {args.output}", file=sys.stderr)
+    # Import gradium after validation
+    try:
+        import gradium
+    except ImportError:
+        print(
+            "Error: 'gradium' package not installed. Install with: "
+            "pip install gradium soundfile sounddevice numpy",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
-    # Try to play
-    if HAS_SOUNDFILE:
-        try:
-            import sounddevice as sd
-            arr = np.frombuffer(raw, dtype=np.int16)
-            sd.play(arr, samplerate=args.rate)
-            sd.wait()
-            print("Played audio.", file=sys.stderr)
-        except Exception as e:
-            print(f"Could not play audio: {e}", file=sys.stderr)
+    print(f"Generating speech: {args.text[:60]}{'...' if len(args.text) > 60 else ''}")
+
+    # Call Gradium TTS API
+    client = gradium.Gradium(api_key=api_key)
+
+    try:
+        response = client.tts(
+            text=args.text,
+            voice_id=args.voice,  # type: ignore
+            sample_rate=args.rate,
+        )
+
+        # response should contain audio data - adapt based on actual gradium API
+        # This is a placeholder for the actual gradium SDK response handling
+        audio_data = response.audio if hasattr(response, "audio") else response
+        sample_rate = response.sample_rate if hasattr(response, "sample_rate") else args.rate
+
+        if isinstance(audio_data, np.ndarray):
+            audio_array = audio_data
+        elif isinstance(audio_data, (list, bytes)):
+            audio_array = np.array(audio_data, dtype=np.float32)
+        else:
+            print(f"Unexpected audio data type: {type(audio_data)}", file=sys.stderr)
+            sys.exit(1)
+
+        # Play audio
+        print("Playing audio...")
+        sd.play(audio_array, samplerate=sample_rate)
+        sd.wait()
+
+        # Save to file if requested
+        if args.output:
+            sf.write(args.output, audio_array, sample_rate)
+            print(f"Audio saved to: {args.output}")
+
+        print("Done!")
+
+    except Exception as e:
+        print(f"Error during TTS generation: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
