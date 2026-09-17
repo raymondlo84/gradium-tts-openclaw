@@ -27,6 +27,13 @@ echo "GRADIUM_API_KEY=your_key_here" > .env
 
 Sign up at [Gradium](https://docs.gradium.ai/) and get your API key.
 
+## Setup on OpenClaw TTS
+
+Please follow the [PLUGIN_README.md](PLUGIN_README.md).
+
+## OpenClaw Example
+<img width="2528" height="1340" alt="Ready-today-s-news-via-Gradium-TTS-—-OpenClaw" src="https://github.com/user-attachments/assets/20927c3d-ae72-4996-9cd5-aa7880d4421d" />
+
 ## License
 
 MIT
