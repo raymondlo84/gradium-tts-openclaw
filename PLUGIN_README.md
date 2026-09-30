@@ -20,7 +20,9 @@ Create a Gradium account and API key at [https://gradium.ai](https://gradium.ai)
 
 Expose your API key via environment variable or gateway config. Config takes precedence over the env var.
 
-**Via environment variable:**
+**Via environment variable:** 
+
+Please add this variable to ~/.bashrc after validation.
 
 ```bash
 export GRADIUM_API_KEY="your-gradium-api-key"
