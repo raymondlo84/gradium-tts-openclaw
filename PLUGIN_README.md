@@ -27,37 +27,19 @@ export GRADIUM_API_KEY="your-gradium-api-key"
 ```
 
 **Via gateway config (`openclaw.json`):**
-
+Copy and paste this to the bottom 
 ```json5
-{
-  tts: {
-    auto: "always",
-    provider: "gradium",
-    providers: {
-      gradium: {
-        apiKey: "${GRADIUM_API_KEY}",
-      },
-    },
-  },
-}
-```
+  "tts": {
+    "auto": "always",
+    "provider": "gradium",
+    "providers": {
+      "gradium": {
+        "speakerVoiceId": "YTpq7expH9539ERJ",
+        "apiKey": "REPLACE_THIS_WITH_API_KEY"
+      }
+    }
+  }
 
-## Config
-
-```json5
-{
-  tts: {
-    auto: "always",
-    provider: "gradium",
-    providers: {
-      gradium: {
-        speakerVoiceId: "YTpq7expH9539ERJ",
-        // apiKey: "${GRADIUM_API_KEY}",
-        // baseUrl: "https://api.gradium.ai",
-      },
-    },
-  },
-}
 ```
 
 | Key | Type | Description |
