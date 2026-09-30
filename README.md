@@ -18,6 +18,10 @@ python3 -m venv venv && ./venv/bin/pip install gradium soundfile sounddevice num
 # Create env file
 echo "GRADIUM_API_KEY=your_key_here" > .env
 
+# Bugs on Spark, reset sound if it was not working.
+# systemctl --user restart pipewire wireplumber
+
+
 # Run it
 ./venv/bin/python tts.py "Hello, world!"
 ./venv/bin/python tts.py -o greeting.wav "Hello, world!"
